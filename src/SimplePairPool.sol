@@ -20,14 +20,12 @@ contract SimplePairPool {
     mapping(address account => uint256 shares) public balanceOf;
 
     error AmountMustBeGreaterThanZero();
-    error InvalidLiquidityToken();
-    error CallerCannotBeZeroAddress();
     error InvalidLiquidityPair();
     error SharesMustBeGreaterThanZero();
     error NoLiquidityInPool();
+    error InsufficientShares();
 
     constructor(address _tokenA, address _tokenB) {
-        if (_tokenA == address(0) || _tokenB == address(0)) revert InvalidLiquidityToken();
         i_tokenA = IERC20(_tokenA);
         i_tokenB = IERC20(_tokenB);
     }
@@ -53,17 +51,18 @@ contract SimplePairPool {
     }
 
     function calculateTokenB(uint256 amountA) public view returns (uint256 amountB) {
+        if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         amountB = reserveB.mulDiv(amountA, reserveA, Math.Rounding.Ceil);
     }
 
     function calculateTokenA(uint256 amountB) public view returns (uint256 amountA) {
+        if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         amountA = reserveA.mulDiv(amountB, reserveB, Math.Rounding.Ceil);
     }
 
     function addLiquidityForA(uint256 amountA) external {
         if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         if (amountA == 0) revert AmountMustBeGreaterThanZero();
-        if (msg.sender == address(0)) revert CallerCannotBeZeroAddress();
 
         uint256 amountB = calculateTokenB(amountA);
 
@@ -81,7 +80,6 @@ contract SimplePairPool {
     function addLiquidityForB(uint256 amountB) external {
         if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         if (amountB == 0) revert AmountMustBeGreaterThanZero();
-        if (msg.sender == address(0)) revert CallerCannotBeZeroAddress();
 
         uint256 amountA = calculateTokenA(amountB);
 
@@ -107,7 +105,6 @@ contract SimplePairPool {
         }
 
         shares = calculateShares(amountA, amountB);
-        if (shares == 0) revert SharesMustBeGreaterThanZero();
 
         _mint(msg.sender, shares);
 
@@ -117,6 +114,7 @@ contract SimplePairPool {
 
     function removeLiquidity(uint256 shares) external returns (uint256 amountA, uint256 amountB) {
         if (shares == 0) revert SharesMustBeGreaterThanZero();
+        if (shares > balanceOf[msg.sender]) revert InsufficientShares();
 
         amountA = shares.mulDiv(reserveA, totalSupply, Math.Rounding.Floor);
         amountB = shares.mulDiv(reserveB, totalSupply, Math.Rounding.Floor);
