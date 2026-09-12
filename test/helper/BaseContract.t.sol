@@ -54,4 +54,19 @@ contract BaseContract is Test {
         vm.prank(account);
         pool.addLiquidity(amount1, amount2);
     }
+
+    function _removeLiquidity(address account, uint256 shares) internal {
+        vm.prank(account);
+        pool.removeLiquidity(shares);
+    }
+
+    function _addLiquidityForA(address account, uint256 amount) internal {
+        vm.prank(account);
+        pool.addLiquidityForA(amount);
+    }
+
+    function _addLiquidityForB(address account, uint256 amount) internal {
+        vm.prank(account);
+        pool.addLiquidityForB(amount);
+    }
 }
