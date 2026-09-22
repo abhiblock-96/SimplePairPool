@@ -24,18 +24,19 @@ contract SimplePairPool {
     error SharesMustBeGreaterThanZero();
     error NoLiquidityInPool();
     error InsufficientShares();
+    error InvalidTokenForSwap();
 
     constructor(address _tokenA, address _tokenB) {
         i_tokenA = IERC20(_tokenA);
         i_tokenB = IERC20(_tokenB);
     }
 
-    function _mint(address to, uint256 shares) internal {
+    function _mint(address to, uint256 shares) private {
         balanceOf[to] += shares;
         totalSupply += shares;
     }
 
-    function _burn(address from, uint256 shares) internal {
+    function _burn(address from, uint256 shares) private {
         balanceOf[from] -= shares;
         totalSupply -= shares;
     }
@@ -126,5 +127,46 @@ contract SimplePairPool {
 
         SafeERC20.safeTransfer(i_tokenA, msg.sender, amountA);
         SafeERC20.safeTransfer(i_tokenB, msg.sender, amountB);
+    }
+
+    function _calculateTokenA(uint256 amountIn) private view returns (uint256 amountOut) {
+        if (reserveA == 0 || reserveB == 0) revert NoLiquidityInPool();
+
+        uint256 tokenBTotal = reserveB + amountIn;
+        amountOut = reserveA.mulDiv(amountIn, tokenBTotal, Math.Rounding.Floor);
+    }
+
+    function _calculateTokenB(uint256 amountIn) private view returns (uint256 amountOut) {
+        if (reserveA == 0 || reserveB == 0) revert NoLiquidityInPool();
+
+        uint256 tokenATotal = reserveA + amountIn;
+        amountOut = reserveB.mulDiv(amountIn, tokenATotal, Math.Rounding.Floor);
+    }
+
+    function swap(address tokenIn, uint256 amountIn) external returns (address tokenOut, uint256 amountOut) {
+        if (tokenIn != address(i_tokenA) && tokenIn != address(i_tokenB)) revert InvalidTokenForSwap();
+        if (amountIn == 0) revert AmountMustBeGreaterThanZero();
+
+        if (tokenIn == address(i_tokenA)) {
+            tokenOut = address(i_tokenB);
+            amountOut = _calculateTokenB(amountIn);
+
+            reserveB -= amountOut;
+
+            SafeERC20.safeTransferFrom(i_tokenA, msg.sender, address(this), amountIn);
+            SafeERC20.safeTransfer(i_tokenB, msg.sender, amountOut);
+
+            reserveA += amountIn;
+        } else {
+            tokenOut = address(i_tokenA);
+            amountOut = _calculateTokenA(amountIn);
+
+            reserveA -= amountOut;
+
+            SafeERC20.safeTransferFrom(i_tokenB, msg.sender, address(this), amountIn);
+            SafeERC20.safeTransfer(i_tokenA, msg.sender, amountOut);
+
+            reserveB += amountIn;
+        }
     }
 }
