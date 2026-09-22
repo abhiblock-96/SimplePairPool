@@ -21,6 +21,10 @@ contract TokenA is ERC20, AccessControl {
         if (msg.sender != account) revert OnlyOwnerCanBurnTokens();
         _burn(account, value);
     }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
 }
 
 contract TokenB is ERC20, AccessControl {
@@ -39,5 +43,9 @@ contract TokenB is ERC20, AccessControl {
     function burn(address account, uint256 value) external {
         if (msg.sender != account) revert OnlyOwnerCanBurnTokens();
         _burn(account, value);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
     }
 }

@@ -346,4 +346,65 @@ contract PoolUnitTest is BaseContract {
         vm.expectRevert(SimplePairPool.NoLiquidityInPool.selector);
         _addLiquidityForB(provider1, 1000);
     }
+
+    function test_swap_TransfersExactUsdcAmountToUser() external {
+        _provideLiquidityForSwap();
+
+        _mintTokens(account1, 2e8, 5e8);
+        _approve(account1, 2e8, 5e8);
+
+        uint256 tokenABalBefore = dai.balanceOf(account1);
+        uint256 tokenBBalBefore = usdc.balanceOf(account1);
+
+        _swap(account1, address(dai), 1e8);
+
+        uint256 tokenABalAfter = dai.balanceOf(account1);
+        uint256 tokenBBalAfter = usdc.balanceOf(account1);
+
+        assertEq(tokenABalAfter, tokenABalBefore - 1e8);
+        assertEq(tokenBBalAfter, tokenBBalBefore + 15e7);
+    }
+
+    function test_swap_TransfersExactDaiAmountToUser() external {
+        _provideLiquidityForSwap();
+
+        _mintTokens(account1, 2e8, 5e8);
+        _approve(account1, 2e8, 5e8);
+
+        uint256 tokenABalBefore = dai.balanceOf(account1);
+        uint256 tokenBBalBefore = usdc.balanceOf(account1);
+
+        _swap(account1, address(usdc), 35e5);
+
+        uint256 tokenABalAfter = dai.balanceOf(account1);
+        uint256 tokenBBalAfter = usdc.balanceOf(account1);
+
+        assertEq(tokenABalAfter, tokenABalBefore + 1153212);
+        assertEq(tokenBBalAfter, tokenBBalBefore - 35e5);
+    }
+
+    function test_swap_PreservesConstantProductInvariant() external {
+        _provideLiquidityForSwap();
+
+        _mintTokens(account1, 2e8, 5e8);
+        _approve(account1, 2e8, 5e8);
+
+        uint256 initialReserveRatio = pool.reserveB() / pool.reserveA();
+
+        _swap(account1, address(usdc), 35e5);
+
+        uint256 finalReserveRatio = pool.reserveB() / pool.reserveA();
+
+        assertEq(initialReserveRatio, finalReserveRatio);
+    }
+
+    function test_swap_RevertsWhenInvalidTokenProvided() external {
+        vm.expectRevert(SimplePairPool.InvalidTokenForSwap.selector);
+        _swap(account1, address(10), 30);
+    }
+
+    function test_swap_RevertsWhenZeroAmountProvided() external {
+        vm.expectRevert(SimplePairPool.AmountMustBeGreaterThanZero.selector);
+        _swap(account1, address(dai), 0);
+    }
 }

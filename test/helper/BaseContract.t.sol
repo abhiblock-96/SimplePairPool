@@ -13,9 +13,13 @@ contract BaseContract is Test {
     address internal admin = makeAddr("admin");
     address internal provider1 = makeAddr("provider1");
     address internal provider2 = makeAddr("provider2");
+    address internal account1 = makeAddr("account1");
 
-    uint256 internal tokenAamount = 1e6;
-    uint256 internal tokenBamount = 4e6;
+    /// @notice 1e9 in base unit == 1000 usdc tokens
+    uint256 internal tokenAamount = 1e9;
+
+    /// @notice 1e9 in base unit == 4000 usdc tokens
+    uint256 internal tokenBamount = 4e9;
 
     function setUp() external {
         vm.startPrank(admin);
@@ -68,5 +72,17 @@ contract BaseContract is Test {
     function _addLiquidityForB(address account, uint256 amount) internal {
         vm.prank(account);
         pool.addLiquidityForB(amount);
+    }
+
+    function _provideLiquidityForSwap() internal {
+        _mintTokens(provider1, tokenAamount, tokenBamount);
+        _approve(provider1, tokenAamount, tokenBamount);
+
+        _addLiquidity(provider1, 1e8, 3e8);
+    }
+
+    function _swap(address account, address tokenIn, uint256 amount) internal {
+        vm.prank(account);
+        pool.swap(tokenIn, amount);
     }
 }
