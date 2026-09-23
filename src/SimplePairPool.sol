@@ -12,6 +12,9 @@ contract SimplePairPool {
 
     uint256 public reserveA;
     uint256 public reserveB;
+    uint256 public constant SWAP_BASE_FEE = 3;
+    uint256 public constant SWAP_FEE_UNIT = 1000;
+    uint256 public constant SLIPPAGE_UNIT = 100;
 
     // total shares supply.
     uint256 public totalSupply;
@@ -19,12 +22,20 @@ contract SimplePairPool {
     // Mapping of users account to their shares.
     mapping(address account => uint256 shares) public balanceOf;
 
+    event LiquidityAdded(address indexed user, uint256 amountA, uint256 amountB);
+    event LiquidityRemoved(address indexed user, uint256 amountA, uint256 amountB);
+    event Swap(
+        address indexed user, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut
+    );
+
     error AmountMustBeGreaterThanZero();
     error InvalidLiquidityPair();
     error SharesMustBeGreaterThanZero();
     error NoLiquidityInPool();
     error InsufficientShares();
     error InvalidTokenForSwap();
+    error InsufficientAmountOut();
+    error SlippageExceedsSlippageUnit();
 
     constructor(address _tokenA, address _tokenB) {
         i_tokenA = IERC20(_tokenA);
@@ -51,21 +62,26 @@ contract SimplePairPool {
         }
     }
 
-    function calculateTokenB(uint256 amountA) public view returns (uint256 amountB) {
+    function calculateLiquidityAmountB(uint256 amountA) public view returns (uint256 amountB) {
         if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         amountB = reserveB.mulDiv(amountA, reserveA, Math.Rounding.Ceil);
     }
 
-    function calculateTokenA(uint256 amountB) public view returns (uint256 amountA) {
+    function calculateLiquidityAmountA(uint256 amountB) public view returns (uint256 amountA) {
         if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         amountA = reserveA.mulDiv(amountB, reserveB, Math.Rounding.Ceil);
+    }
+
+    function _update(uint256 _reserveA, uint256 _reserveB) private {
+        reserveA = _reserveA;
+        reserveB = _reserveB;
     }
 
     function addLiquidityForA(uint256 amountA) external {
         if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         if (amountA == 0) revert AmountMustBeGreaterThanZero();
 
-        uint256 amountB = calculateTokenB(amountA);
+        uint256 amountB = calculateLiquidityAmountB(amountA);
 
         SafeERC20.safeTransferFrom(i_tokenA, msg.sender, address(this), amountA);
         SafeERC20.safeTransferFrom(i_tokenB, msg.sender, address(this), amountB);
@@ -74,15 +90,16 @@ contract SimplePairPool {
 
         _mint(msg.sender, shares);
 
-        reserveA += amountA;
-        reserveB += amountB;
+        _update(i_tokenA.balanceOf(address(this)), i_tokenB.balanceOf(address(this)));
+
+        emit LiquidityAdded(msg.sender, amountA, amountB);
     }
 
     function addLiquidityForB(uint256 amountB) external {
         if (reserveA <= 0 || reserveB <= 0) revert NoLiquidityInPool();
         if (amountB == 0) revert AmountMustBeGreaterThanZero();
 
-        uint256 amountA = calculateTokenA(amountB);
+        uint256 amountA = calculateLiquidityAmountA(amountB);
 
         SafeERC20.safeTransferFrom(i_tokenA, msg.sender, address(this), amountA);
         SafeERC20.safeTransferFrom(i_tokenB, msg.sender, address(this), amountB);
@@ -91,8 +108,9 @@ contract SimplePairPool {
 
         _mint(msg.sender, shares);
 
-        reserveA += amountA;
-        reserveB += amountB;
+        _update(i_tokenA.balanceOf(address(this)), i_tokenB.balanceOf(address(this)));
+
+        emit LiquidityAdded(msg.sender, amountA, amountB);
     }
 
     function addLiquidity(uint256 amountA, uint256 amountB) external returns (uint256 shares) {
@@ -109,64 +127,145 @@ contract SimplePairPool {
 
         _mint(msg.sender, shares);
 
-        reserveA += amountA;
-        reserveB += amountB;
+        _update(i_tokenA.balanceOf(address(this)), i_tokenB.balanceOf(address(this)));
+
+        emit LiquidityAdded(msg.sender, amountA, amountB);
+    }
+
+    function _getTokenAmount(uint256 shares) private view returns (uint256 amountA, uint256 amountB) {
+        amountA = shares.mulDiv(reserveA, totalSupply, Math.Rounding.Floor);
+        amountB = shares.mulDiv(reserveB, totalSupply, Math.Rounding.Floor);
     }
 
     function removeLiquidity(uint256 shares) external returns (uint256 amountA, uint256 amountB) {
         if (shares == 0) revert SharesMustBeGreaterThanZero();
         if (shares > balanceOf[msg.sender]) revert InsufficientShares();
 
-        amountA = shares.mulDiv(reserveA, totalSupply, Math.Rounding.Floor);
-        amountB = shares.mulDiv(reserveB, totalSupply, Math.Rounding.Floor);
+        (amountA, amountB) = _getTokenAmount(shares);
 
         _burn(msg.sender, shares);
 
-        reserveA -= amountA;
-        reserveB -= amountB;
-
         SafeERC20.safeTransfer(i_tokenA, msg.sender, amountA);
         SafeERC20.safeTransfer(i_tokenB, msg.sender, amountB);
+
+        _update(i_tokenA.balanceOf(address(this)), i_tokenB.balanceOf(address(this)));
+
+        emit LiquidityRemoved(msg.sender, amountA, amountB);
     }
 
-    function _calculateTokenA(uint256 amountIn) private view returns (uint256 amountOut) {
+    function _getSwapFee(uint256 amountIn) private view returns (uint256) {
+        return (amountIn * SWAP_BASE_FEE / SWAP_FEE_UNIT);
+    }
+
+    function _calculateSwapAmountOutA(uint256 amountIn) private view returns (uint256 amountOut) {
         if (reserveA == 0 || reserveB == 0) revert NoLiquidityInPool();
 
-        uint256 tokenBTotal = reserveB + amountIn;
-        amountOut = reserveA.mulDiv(amountIn, tokenBTotal, Math.Rounding.Floor);
+        uint256 feesAmount = _getSwapFee(amountIn);
+        uint256 totalAmountIn = amountIn - feesAmount;
+
+        uint256 tokenBTotal = reserveB + totalAmountIn;
+        amountOut = reserveA.mulDiv(totalAmountIn, tokenBTotal, Math.Rounding.Floor);
     }
 
-    function _calculateTokenB(uint256 amountIn) private view returns (uint256 amountOut) {
+    function _calculateSwapAmountOutB(uint256 amountIn) private view returns (uint256 amountOut) {
         if (reserveA == 0 || reserveB == 0) revert NoLiquidityInPool();
 
-        uint256 tokenATotal = reserveA + amountIn;
-        amountOut = reserveB.mulDiv(amountIn, tokenATotal, Math.Rounding.Floor);
+        uint256 feesAmount = _getSwapFee(amountIn);
+        uint256 totalAmountIn = amountIn - feesAmount;
+
+        uint256 tokenATotal = reserveA + totalAmountIn;
+        amountOut = reserveB.mulDiv(totalAmountIn, tokenATotal, Math.Rounding.Floor);
     }
 
-    function swap(address tokenIn, uint256 amountIn) external returns (address tokenOut, uint256 amountOut) {
+    function getMinAmountOut(uint256 amountIn, address tokenIn, uint256 slippage)
+        external
+        view
+        returns (uint256 minAmountOut)
+    {
+        if (amountIn == 0) {
+            revert AmountMustBeGreaterThanZero();
+        }
+
+        if (slippage >= SLIPPAGE_UNIT) {
+            revert SlippageExceedsSlippageUnit();
+        }
+
+        if (tokenIn == address(i_tokenA)) {
+            uint256 amount = _calculateSwapAmountOutB(amountIn);
+            uint256 slippageAmount = amount.mulDiv(slippage, SLIPPAGE_UNIT, Math.Rounding.Floor);
+            minAmountOut = amount - slippageAmount;
+        } else if (tokenIn == address(i_tokenB)) {
+            uint256 amount = _calculateSwapAmountOutA(amountIn);
+            uint256 slippageAmount = amount.mulDiv(slippage, SLIPPAGE_UNIT, Math.Rounding.Floor);
+            minAmountOut = amount - slippageAmount;
+        } else {
+            revert InvalidTokenForSwap();
+        }
+    }
+
+    function swap(address tokenIn, uint256 amountIn, uint256 minAmountOut)
+        external
+        returns (address tokenOut, uint256 amountOut)
+    {
         if (tokenIn != address(i_tokenA) && tokenIn != address(i_tokenB)) revert InvalidTokenForSwap();
         if (amountIn == 0) revert AmountMustBeGreaterThanZero();
 
         if (tokenIn == address(i_tokenA)) {
             tokenOut = address(i_tokenB);
-            amountOut = _calculateTokenB(amountIn);
-
-            reserveB -= amountOut;
+            amountOut = _calculateSwapAmountOutB(amountIn);
+            if (amountOut < minAmountOut) {
+                revert InsufficientAmountOut();
+            }
 
             SafeERC20.safeTransferFrom(i_tokenA, msg.sender, address(this), amountIn);
             SafeERC20.safeTransfer(i_tokenB, msg.sender, amountOut);
 
-            reserveA += amountIn;
+            _update(i_tokenA.balanceOf(address(this)), i_tokenB.balanceOf(address(this)));
+
+            emit Swap(msg.sender, tokenIn, tokenOut, amountIn, amountOut);
         } else {
             tokenOut = address(i_tokenA);
-            amountOut = _calculateTokenA(amountIn);
-
-            reserveA -= amountOut;
+            amountOut = _calculateSwapAmountOutA(amountIn);
+            if (amountOut < minAmountOut) {
+                revert InsufficientAmountOut();
+            }
 
             SafeERC20.safeTransferFrom(i_tokenB, msg.sender, address(this), amountIn);
             SafeERC20.safeTransfer(i_tokenA, msg.sender, amountOut);
 
-            reserveB += amountIn;
+            _update(i_tokenA.balanceOf(address(this)), i_tokenB.balanceOf(address(this)));
+
+            emit Swap(msg.sender, tokenIn, tokenOut, amountIn, amountOut);
+        }
+    }
+
+    function getReserves() external view returns (uint256, uint256) {
+        return (reserveA, reserveB);
+    }
+
+    function getTotalLiquidity() external view returns (uint256) {
+        return totalSupply;
+    }
+
+    function getUserLiquidity(address user) external view returns (uint256 shares, uint256 tokenA, uint256 tokenB) {
+        shares = balanceOf[user];
+        (tokenA, tokenB) = _getTokenAmount(shares);
+    }
+
+    function getSwapFee(uint256 amountIn) external view returns (uint256) {
+        return _getSwapFee(amountIn);
+    }
+
+    function getAmountOut(uint256 amountIn, address tokenIn) external view returns (uint256) {
+        if (amountIn == 0) {
+            revert AmountMustBeGreaterThanZero();
+        }
+        if (tokenIn == address(i_tokenA)) {
+            return _calculateSwapAmountOutB(amountIn);
+        } else if (tokenIn == address(i_tokenB)) {
+            return _calculateSwapAmountOutA(amountIn);
+        } else {
+            revert InvalidTokenForSwap();
         }
     }
 }
