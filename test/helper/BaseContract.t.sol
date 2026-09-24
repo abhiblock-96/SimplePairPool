@@ -81,8 +81,8 @@ contract BaseContract is Test {
         _addLiquidity(provider1, 1e8, 3e8);
     }
 
-    function _swap(address account, address tokenIn, uint256 amount) internal {
+    function _swap(address account, address tokenIn, uint256 amount, uint256 minAmountOut) internal {
         vm.prank(account);
-        pool.swap(tokenIn, amount);
+        pool.swap(tokenIn, amount, minAmountOut);
     }
 }

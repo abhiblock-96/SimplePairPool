@@ -34,6 +34,22 @@ contract PoolUnitTest is BaseContract {
         assertEq(pool.calculateShares(50, 10000), 707);
     }
 
+    function test_calculateShares_ReturnsZeroShareIfZeroAmountProvided() external {
+        _mintTokens(provider1, tokenAamount, tokenBamount);
+        _approve(provider1, 1000, 40000);
+        _addLiquidity(provider1, 100, 20000);
+
+        assertEq(pool.calculateShares(0, 0), 0);
+    }
+
+    function test_calculateShares_RevertIfMaxAmountProvided() external {
+        _mintTokens(provider1, type(uint256).max, type(uint256).max);
+        _approve(provider1, type(uint256).max, type(uint256).max);
+
+        vm.expectRevert();
+        pool.calculateShares(type(uint256).max, type(uint256).max);
+    }
+
     function test_addLiquidity_MintsExpectedSharesToProvider() external {
         _mintTokens(provider1, tokenAamount, tokenBamount);
         _approve(provider1, 1000, 40000);
@@ -226,12 +242,12 @@ contract PoolUnitTest is BaseContract {
 
         _addLiquidity(provider1, 100, 10000);
 
-        assertEq(pool.calculateTokenA(5000), 50);
+        assertEq(pool.calculateLiquidityAmountA(5000), 50);
     }
 
     function test_calculateTokenA_RevertsIfNoLiquidityInPool() external {
         vm.expectRevert(SimplePairPool.NoLiquidityInPool.selector);
-        pool.calculateTokenA(5000);
+        pool.calculateLiquidityAmountB(5000);
     }
 
     function test_calculateTokenB_ReturnsExpectedTokenBForLiquidity() external {
@@ -240,12 +256,12 @@ contract PoolUnitTest is BaseContract {
 
         _addLiquidity(provider1, 100, 10000);
 
-        assertEq(pool.calculateTokenB(1), 100);
+        assertEq(pool.calculateLiquidityAmountB(1), 100);
     }
 
     function test_calculateTokenB_RevertsIfNoLiquidityInPool() external {
         vm.expectRevert(SimplePairPool.NoLiquidityInPool.selector);
-        pool.calculateTokenB(50);
+        pool.calculateLiquidityAmountB(50);
     }
 
     function test_addLiquidityForA_TransfersExpectedTokensToPool() external {
@@ -256,7 +272,7 @@ contract PoolUnitTest is BaseContract {
 
         uint256 tokenBBalBefore = usdc.balanceOf(address(pool));
         uint256 tokenABalBefore = dai.balanceOf(address(pool));
-        uint256 tokenB = pool.calculateTokenB(10);
+        uint256 tokenB = pool.calculateLiquidityAmountB(10);
 
         _addLiquidityForA(provider1, 10);
 
@@ -274,7 +290,7 @@ contract PoolUnitTest is BaseContract {
         _addLiquidity(provider1, 100, 10000);
 
         uint256 sharesBalBefore = pool.balanceOf(provider1);
-        uint256 tokenB = pool.calculateTokenB(10);
+        uint256 tokenB = pool.calculateLiquidityAmountB(10);
         uint256 shares = pool.calculateShares(10, tokenB);
 
         _addLiquidityForA(provider1, 10);
@@ -356,13 +372,15 @@ contract PoolUnitTest is BaseContract {
         uint256 tokenABalBefore = dai.balanceOf(account1);
         uint256 tokenBBalBefore = usdc.balanceOf(account1);
 
-        _swap(account1, address(dai), 1e8);
+        uint256 minAmountOut = pool.getMinAmountOut(1e8, address(dai), 1);
+
+        _swap(account1, address(dai), 1e8, minAmountOut);
 
         uint256 tokenABalAfter = dai.balanceOf(account1);
         uint256 tokenBBalAfter = usdc.balanceOf(account1);
 
         assertEq(tokenABalAfter, tokenABalBefore - 1e8);
-        assertEq(tokenBBalAfter, tokenBBalBefore + 15e7);
+        assertEq(tokenBBalAfter, tokenBBalBefore + 149774661);
     }
 
     function test_swap_TransfersExactDaiAmountToUser() external {
@@ -374,37 +392,41 @@ contract PoolUnitTest is BaseContract {
         uint256 tokenABalBefore = dai.balanceOf(account1);
         uint256 tokenBBalBefore = usdc.balanceOf(account1);
 
-        _swap(account1, address(usdc), 35e5);
+        uint256 minAmountOut = pool.getMinAmountOut(35e5, address(usdc), 1);
+
+        _swap(account1, address(usdc), 35e5, minAmountOut);
 
         uint256 tokenABalAfter = dai.balanceOf(account1);
         uint256 tokenBBalAfter = usdc.balanceOf(account1);
 
-        assertEq(tokenABalAfter, tokenABalBefore + 1153212);
+        assertEq(tokenABalAfter, tokenABalBefore + 1149792);
         assertEq(tokenBBalAfter, tokenBBalBefore - 35e5);
     }
 
-    function test_swap_PreservesConstantProductInvariant() external {
+    function test_swap_IncreasesConstantProductDueToSwapFee() external {
         _provideLiquidityForSwap();
 
         _mintTokens(account1, 2e8, 5e8);
         _approve(account1, 2e8, 5e8);
 
-        uint256 initialReserveRatio = pool.reserveB() / pool.reserveA();
+        uint256 initialReserve = pool.reserveB() * pool.reserveA();
 
-        _swap(account1, address(usdc), 35e5);
+        uint256 minAmountOut = pool.getMinAmountOut(35e5, address(usdc), 1);
 
-        uint256 finalReserveRatio = pool.reserveB() / pool.reserveA();
+        _swap(account1, address(usdc), 35e5, minAmountOut);
 
-        assertEq(initialReserveRatio, finalReserveRatio);
+        uint256 finalReserve = pool.reserveB() * pool.reserveA();
+
+        assertGt(finalReserve, initialReserve);
     }
 
     function test_swap_RevertsWhenInvalidTokenProvided() external {
         vm.expectRevert(SimplePairPool.InvalidTokenForSwap.selector);
-        _swap(account1, address(10), 30);
+        _swap(account1, address(10), 30, 0);
     }
 
     function test_swap_RevertsWhenZeroAmountProvided() external {
         vm.expectRevert(SimplePairPool.AmountMustBeGreaterThanZero.selector);
-        _swap(account1, address(dai), 0);
+        _swap(account1, address(dai), 0, 0);
     }
 }
